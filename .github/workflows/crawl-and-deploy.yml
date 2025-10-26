@@ -1,0 +1,64 @@
+name: Scheduled crawl and deploy
+
+on:
+  # run on manual dispatch
+  workflow_dispatch: {}
+  # run on push to the main branch (triggered by developers)
+  push:
+    branches:
+      - master
+  # run hourly (top of every hour)
+  schedule:
+    - cron: '0 * * * *'
+
+permissions:
+  contents: write
+
+jobs:
+  crawl-and-commit:
+    # If the event is a push and the actor is the actions bot, skip the job.
+    # This prevents the workflow's own commit->push from re-triggering the job.
+    if: ${{ github.event_name != 'push' || github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'yarn'
+
+      - name: Install crawl dependencies
+        working-directory: ./crawl
+        run: |
+          if [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile || yarn install
+          else
+            yarn install || npm install
+          fi
+
+      - name: Run crawler
+        working-directory: ./crawl
+        run: |
+          # run the crawler script which writes into frontend/public/courses or public/courses
+          yarn crawl || npm run crawl
+
+      - name: Commit and push generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Add both possible target folders
+          git add frontend/public/courses || true
+          git add public/courses || true
+          git add frontend/public/courses/crawlInfo.json || true
+          # Only commit when there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore(crawl): update courses (automated)" || true
+            git push
+          fi
